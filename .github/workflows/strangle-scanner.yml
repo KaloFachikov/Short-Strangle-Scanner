@@ -1,0 +1,52 @@
+name: Daily Short Strangle Scanner
+
+on:
+  schedule:
+    # Two triggers so it always lands ~35 min after the 9:30 ET open,
+    # in both daylight time (13:30 UTC open) and standard time (14:30 UTC open).
+    # The script itself skips weekends, NYSE holidays and anything outside 30-60 min after the open.
+    - cron: "5 14 * * 1-5"
+    - cron: "5 15 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Run now, ignoring calendar/time window"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Run scanner
+        env:
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          REPORT_TO: ${{ secrets.REPORT_TO }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.force }}" = "true" ]; then
+            python strangle_scanner.py --force
+          else
+            python strangle_scanner.py
+          fi
+
+      - name: Save report and IV history to repo
+        run: |
+          git config user.name "strangle-scanner-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add reports iv_history.csv 2>/dev/null || true
+          git diff --cached --quiet || (git commit -m "Strangle scan $(date -u +%F)" && git push)
